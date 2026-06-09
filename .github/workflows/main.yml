@@ -1,0 +1,56 @@
+name: Centralized Security Gate & Dispatch
+
+on:
+  workflow_call:
+    secrets:
+      ORG_PAT:
+        required: true
+      LOCAL_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  assign-reviewer:
+    name: Assign PR Reviewer
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    # Authorize the transient execution token to mutate local pull request parameters
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Request Review via Native REST API
+        env:
+          # Swapping out the user PAT for the platform-authorized token context
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Utilizing the native GitHub CLI tool over the standard REST endpoint
+          gh pr edit ${{ github.event.pull_request.html_url }} --add-reviewer 0xSA7
+
+  sast:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_PAT }}
+          submodules: recursive
+
+      - name: Run Semgrep
+        run: |
+          semgrep ci \
+            --config="p/c" \
+            --no-suppress-errors \
+            --sarif --output=semgrep.sarif
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
